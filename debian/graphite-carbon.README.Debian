@@ -1,0 +1,32 @@
+graphite-carbon
+---------------
+
+
+carbon-aggregator
+-----------------
+
+carbon-aggregator can only started via Systemd Unit files.
+The unit file is able to start instances of your carbon-aggregator.
+
+The first instance should named named 'a', inside the carbon.conf file
+the a instance is named only [aggregator]
+
+enable the instance a on boot:
+
+  systemctl enable carbon-aggregator@a
+
+start the instance a now:
+
+  systemctl start carbon-aggregator@a
+
+For the second instance you need a new block in your carbon.conf file:
+
+[aggregator:b]
+
+This instance should named 'b'.
+
+
+carbon-relay
+-----------
+
+it's like carbon-aggregator. only replace aggregator with relay.
