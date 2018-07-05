@@ -29,6 +29,12 @@ def increment(stat, increase=1):
   except KeyError:
     stats[stat] = increase
 
+def max(stat, newval):
+  try:
+    if stats[stat] < newval:
+      stats[stat] = newval
+  except KeyError:
+    stats[stat] = newval
 
 def append(stat, value):
   try:
@@ -76,7 +82,9 @@ def recordMetrics():
     creates = myStats.get('creates', 0)
     errors = myStats.get('errors', 0)
     cacheQueries = myStats.get('cacheQueries', 0)
+    cacheBulkQueries = myStats.get('cacheBulkQueries', 0)
     cacheOverflow = myStats.get('cache.overflow', 0)
+    cacheBulkQuerySizes = myStats.get('cacheBulkQuerySize', [])
 
     # Calculate cache-data-structure-derived metrics prior to storing anything
     # in the cache itself -- which would otherwise affect said metrics.
@@ -93,15 +101,21 @@ def recordMetrics():
       pointsPerUpdate = float(committedPoints) / len(updateTimes)
       record('pointsPerUpdate', pointsPerUpdate)
 
+    if cacheBulkQuerySizes:
+      avgBulkSize = sum(cacheBulkQuerySizes) / len(cacheBulkQuerySizes)
+      record('cache.bulk_queries_average_size', avgBulkSize)
+
     record('updateOperations', len(updateTimes))
     record('committedPoints', committedPoints)
     record('creates', creates)
     record('errors', errors)
     record('cache.queries', cacheQueries)
+    record('cache.bulk_queries', cacheBulkQueries)
     record('cache.overflow', cacheOverflow)
 
   # aggregator metrics
   elif settings.program == 'carbon-aggregator':
+    from carbon.aggregator.buffers import BufferManager
     record = aggregator_record
     record('allocatedBuffers', len(BufferManager))
     record('bufferedDatapoints',
@@ -118,10 +132,12 @@ def recordMetrics():
 
   # common metrics
   record('metricsReceived', myStats.get('metricsReceived', 0))
+  record('blacklistMatches', myStats.get('blacklistMatches', 0))
+  record('whitelistRejects', myStats.get('whitelistRejects', 0))
   record('cpuUsage', getCpuUsage())
   try: # This only works on Linux
     record('memUsage', getMemUsage())
-  except:
+  except Exception:
     pass
 
 
@@ -156,6 +172,8 @@ def aggregator_record(metric, value):
 class InstrumentationService(Service):
     def __init__(self):
         self.record_task = LoopingCall(recordMetrics)
+        # Default handlers
+        events.metricReceived.addHandler(lambda metric, datapoint: increment('metricsReceived'))
 
     def startService(self):
         if settings.CARBON_METRIC_INTERVAL > 0:
@@ -170,4 +188,3 @@ class InstrumentationService(Service):
 
 # Avoid import circularities
 from carbon import state, events, cache
-from carbon.aggregator.buffers import BufferManager

@@ -29,6 +29,11 @@ from twisted.internet import reactor
 from twisted.internet.task import LoopingCall
 from twisted.application.service import Service
 
+try:
+    import signal
+except ImportError:
+    log.msg("Couldn't import signal module")
+
 
 SCHEMAS = loadStorageSchemas()
 AGGREGATION_SCHEMAS = loadAggregationSchemas()
@@ -107,19 +112,23 @@ def writeCachedDataPoints():
         dbDir = dirname(dbFilePath)
         try:
             if not exists(dbDir):
-                os.makedirs(dbDir, 0755)
+                os.makedirs(dbDir)
         except OSError, e:
             log.err("%s" % e)
         log.creates("creating database file %s (archive=%s xff=%s agg=%s)" %
                     (dbFilePath, archiveConfig, xFilesFactor, aggregationMethod))
-        whisper.create(
-            dbFilePath,
-            archiveConfig,
-            xFilesFactor,
-            aggregationMethod,
-            settings.WHISPER_SPARSE_CREATE,
-            settings.WHISPER_FALLOCATE_CREATE)
-        instrumentation.increment('creates')
+        try:
+            whisper.create(
+                dbFilePath,
+                archiveConfig,
+                xFilesFactor,
+                aggregationMethod,
+                settings.WHISPER_SPARSE_CREATE,
+                settings.WHISPER_FALLOCATE_CREATE)
+            instrumentation.increment('creates')
+        except:
+            log.err("Error creating %s" % (dbFilePath))
+            continue
       # If we've got a rate limit configured lets makes sure we enforce it
       if UPDATE_BUCKET:
         UPDATE_BUCKET.drain(1, blocking=True)
@@ -127,7 +136,7 @@ def writeCachedDataPoints():
         t1 = time.time()
         whisper.update_many(dbFilePath, datapoints)
         updateTime = time.time() - t1
-      except:
+      except Exception:
         log.msg("Error writing to %s" % (dbFilePath))
         log.err()
         instrumentation.increment('errors')
@@ -147,7 +156,7 @@ def writeForever():
   while reactor.running:
     try:
       writeCachedDataPoints()
-    except:
+    except Exception:
       log.err()
     time.sleep(1)  # The writer thread only sleeps when the cache is empty or an error occurs
 
@@ -156,7 +165,7 @@ def reloadStorageSchemas():
   global SCHEMAS
   try:
     SCHEMAS = loadStorageSchemas()
-  except:
+  except Exception:
     log.msg("Failed to reload storage SCHEMAS")
     log.err()
 
@@ -165,14 +174,18 @@ def reloadAggregationSchemas():
   global AGGREGATION_SCHEMAS
   try:
     AGGREGATION_SCHEMAS = loadAggregationSchemas()
-  except:
+  except Exception:
     log.msg("Failed to reload aggregation SCHEMAS")
     log.err()
 
 
 def shutdownModifyUpdateSpeed():
     try:
-        settings.MAX_UPDATES_PER_SECOND = settings.MAX_UPDATES_PER_SECOND_ON_SHUTDOWN
+        shut = settings.MAX_UPDATES_PER_SECOND_ON_SHUTDOWN
+        if UPDATE_BUCKET:
+          UPDATE_BUCKET.setCapacityAndFillRate(shut,shut)
+        if CREATE_BUCKET:
+          CREATE_BUCKET.setCapacityAndFillRate(shut,shut)
         log.msg("Carbon shutting down.  Changed the update rate to: " + str(settings.MAX_UPDATES_PER_SECOND_ON_SHUTDOWN))
     except KeyError:
         log.msg("Carbon shutting down.  Update rate not changed")
@@ -185,6 +198,9 @@ class WriterService(Service):
         self.aggregation_reload_task = LoopingCall(reloadAggregationSchemas)
 
     def startService(self):
+        if 'signal' in globals().keys():
+          log.msg("Installing SIG_IGN for SIGHUP")
+          signal.signal(signal.SIGHUP, signal.SIG_IGN)
         self.storage_reload_task.start(60, False)
         self.aggregation_reload_task.start(60, False)
         reactor.addSystemEventTrigger('before', 'shutdown', shutdownModifyUpdateSpeed)

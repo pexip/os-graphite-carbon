@@ -32,16 +32,20 @@ defaults = dict(
   USER="",
   MAX_CACHE_SIZE=float('inf'),
   MAX_UPDATES_PER_SECOND=500,
+  MAX_UPDATES_PER_SECOND_ON_SHUTDOWN=1000,
   MAX_CREATES_PER_MINUTE=float('inf'),
   LINE_RECEIVER_INTERFACE='0.0.0.0',
   LINE_RECEIVER_PORT=2003,
+  LINE_RECEIVER_BACKLOG=1024,
   ENABLE_UDP_LISTENER=False,
   UDP_RECEIVER_INTERFACE='0.0.0.0',
   UDP_RECEIVER_PORT=2003,
   PICKLE_RECEIVER_INTERFACE='0.0.0.0',
   PICKLE_RECEIVER_PORT=2004,
+  PICKLE_RECEIVER_BACKLOG=1024,
   CACHE_QUERY_INTERFACE='0.0.0.0',
   CACHE_QUERY_PORT=7002,
+  CACHE_QUERY_BACKLOG=1024,
   LOG_UPDATES=True,
   LOG_CACHE_HITS=True,
   LOG_CACHE_QUEUE_SORTS=True,
@@ -53,6 +57,7 @@ defaults = dict(
   MAX_AGGREGATION_INTERVALS=5,
   FORWARD_ALL=False,
   MAX_QUEUE_SIZE=1000,
+  QUEUE_LOW_WATERMARK_PCT = 0.8,
   ENABLE_AMQP=False,
   AMQP_VERBOSE=False,
   BIND_PATTERNS=['#'],
@@ -63,6 +68,7 @@ defaults = dict(
   MANHOLE_PUBLIC_KEY="",
   RELAY_METHOD='rules',
   REPLICATION_FACTOR=1,
+  DIVERSE_REPLICAS=False,
   DESTINATIONS=[],
   USE_FLOW_CONTROL=True,
   USE_INSECURE_UNPICKLER=False,
@@ -73,6 +79,9 @@ defaults = dict(
   WRITE_BACK_FREQUENCY=None,
   ENABLE_LOGROTATION=True,
   LOG_LISTENER_CONNECTIONS=True,
+  AGGREGATION_RULES='aggregation-rules.conf',
+  REWRITE_RULES='rewrite-rules.conf',
+  RELAY_RULES='relay-rules.conf',
 )
 
 
@@ -149,10 +158,10 @@ class Settings(dict):
         # Attempt to figure out numeric types automatically
         try:
           value = int(value)
-        except:
+        except ValueError:
           try:
             value = float(value)
-          except:
+          except ValueError:
             pass
 
       self[key] = value
@@ -250,6 +259,11 @@ class CarbonCacheOptions(usage.Options):
                 logdir = settings.LOG_DIR
                 if not isdir(logdir):
                     os.makedirs(logdir)
+                    if settings.USER:
+                        # We have not yet switched to the specified user,
+                        # but that user must be able to create files in this
+                        # directory.
+                        os.chown(logdir, self.parent["uid"], self.parent["gid"])
                 log.logToDir(logdir)
 
         if self["whitelist"] is None:
@@ -287,7 +301,7 @@ class CarbonCacheOptions(usage.Options):
             try:
                 pid = int(pf.read().strip())
                 pf.close()
-            except:
+            except IOError:
                 print "Could not read pidfile %s" % pidfile
                 raise SystemExit(1)
             print "Sending kill signal to pid %d" % pid
@@ -309,7 +323,7 @@ class CarbonCacheOptions(usage.Options):
             try:
                 pid = int(pf.read().strip())
                 pf.close()
-            except:
+            except IOError:
                 print "Failed to read pid from %s" % pidfile
                 raise SystemExit(1)
 
@@ -327,7 +341,7 @@ class CarbonCacheOptions(usage.Options):
                 try:
                     pid = int(pf.read().strip())
                     pf.close()
-                except:
+                except IOError:
                     print "Could not read pidfile %s" % pidfile
                     raise SystemExit(1)
                 if _process_alive(pid):
@@ -338,7 +352,7 @@ class CarbonCacheOptions(usage.Options):
                     print "Removing stale pidfile %s" % pidfile
                     try:
                         os.unlink(pidfile)
-                    except:
+                    except IOError:
                         print "Could not remove pidfile %s" % pidfile
 
             print "Starting %s (instance %s)" % (program, instance)
@@ -359,12 +373,12 @@ class CarbonAggregatorOptions(CarbonCacheOptions):
     def postOptions(self):
         CarbonCacheOptions.postOptions(self)
         if self["rules"] is None:
-            self["rules"] = join(settings["CONF_DIR"], "aggregation-rules.conf")
+            self["rules"] = join(settings["CONF_DIR"], settings['AGGREGATION_RULES'])
         settings["aggregation-rules"] = self["rules"]
 
         if self["rewrite-rules"] is None:
             self["rewrite-rules"] = join(settings["CONF_DIR"],
-                                         "rewrite-rules.conf")
+                                         settings['REWRITE_RULES'])
         settings["rewrite-rules"] = self["rewrite-rules"]
 
 
@@ -378,11 +392,11 @@ class CarbonRelayOptions(CarbonCacheOptions):
     def postOptions(self):
         CarbonCacheOptions.postOptions(self)
         if self["rules"] is None:
-            self["rules"] = join(settings["CONF_DIR"], "relay-rules.conf")
+            self["rules"] = join(settings["CONF_DIR"], settings['RELAY_RULES'])
         settings["relay-rules"] = self["rules"]
 
         if self["aggregation-rules"] is None:
-          self["aggregation-rules"] = join(settings["CONF_DIR"], "aggregation-rules.conf")
+            self["aggregation-rules"] = join(settings["CONF_DIR"], settings['AGGREGATION_RULES'])
         settings["aggregation-rules"] = self["aggregation-rules"]
 
         if settings["RELAY_METHOD"] not in ("rules", "consistent-hashing", "aggregated-consistent-hashing"):
@@ -399,8 +413,17 @@ def get_default_parser(usage="%prog [options] <start|stop|status>"):
         "--debug", action="store_true",
         help="Run in the foreground, log to stdout")
     parser.add_option(
+        "--syslog", action="store_true",
+        help="Write logs to syslog")
+    parser.add_option(
+        "--nodaemon", action="store_true",
+        help="Run in the foreground")
+    parser.add_option(
         "--profile",
         help="Record performance profile data to the given file")
+    parser.add_option(
+        "--profiler",
+        help="Specify the profiler to use")
     parser.add_option(
         "--pidfile", default=None,
         help="Write pid to the given file")

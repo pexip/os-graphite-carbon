@@ -2,6 +2,7 @@ import copy
 import os
 import pwd
 import sys
+import __builtin__
 
 from os.path import abspath, basename, dirname
 try:
@@ -11,17 +12,13 @@ except ImportError:
 try:
   import cPickle as pickle
   USING_CPICKLE = True
-except:
+except ImportError:
   import pickle
   USING_CPICKLE = False
 
 from time import sleep, time
 from twisted.python.util import initgroups
 from twisted.scripts.twistd import runApp
-from twisted.scripts._twistd_unix import daemonize
-
-
-daemonize = daemonize  # Backwards compatibility
 
 
 def dropprivs(user):
@@ -52,8 +49,8 @@ def run_twistd_plugin(filename):
       return
 
     # This isn't as evil as you might think
-    __builtins__["instance"] = options.instance
-    __builtins__["program"] = program
+    __builtin__.instance = options.instance
+    __builtin__.program = program
 
     # Then forward applicable options to either twistd or to the plugin itself.
     twistd_options = ["--no_save"]
@@ -63,17 +60,21 @@ def run_twistd_plugin(filename):
     try:
         from twisted.internet import epollreactor
         twistd_options.append("--reactor=epoll")
-    except:
+    except ImportError:
         pass
 
-    if options.debug:
+    if options.debug or options.nodaemon:
         twistd_options.extend(["--nodaemon"])
     if options.profile:
-        twistd_options.append("--profile")
+        twistd_options.extend(["--profile", options.profile])
+    if options.profiler:
+        twistd_options.extend(["--profiler", options.profiler])
     if options.pidfile:
         twistd_options.extend(["--pidfile", options.pidfile])
     if options.umask:
         twistd_options.extend(["--umask", options.umask])
+    if options.syslog:
+        twistd_options.append("--syslog")
 
     # Now for the plugin-specific options.
     twistd_options.append(program)
@@ -83,7 +84,7 @@ def run_twistd_plugin(filename):
 
     for option_name, option_value in vars(options).items():
         if (option_value is not None and
-            option_name not in ("debug", "profile", "pidfile", "umask")):
+            option_name not in ("debug", "profile", "profiler", "pidfile", "umask", "nodaemon", "syslog")):
             twistd_options.extend(["--%s" % option_name.replace("_", "-"),
                                    option_value])
 
@@ -198,6 +199,12 @@ class TokenBucket(object):
         self._tokens -= cost
         return True
       return False
+
+  def setCapacityAndFillRate(self, new_capacity, new_fill_rate):
+    delta = float(new_capacity) - self.capacity
+    self.capacity = float(new_capacity)
+    self.fill_rate = float(new_fill_rate)
+    self._tokens = delta + self._tokens
 
   @property
   def tokens(self):
