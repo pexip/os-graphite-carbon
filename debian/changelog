@@ -1,3 +1,50 @@
+graphite-carbon (0.9.15-1pexip1) pexip; urgency=medium
+
+  * Migrate to Stretch
+  * debian/patches/default_ports.patch: Drop; not needed
+
+ -- John-Mark Bell <jmb@pexip.com>  Wed, 11 Jul 2018 16:15:24 +0100
+
+graphite-carbon (0.9.15-1) unstable; urgency=medium
+
+  * Team upload.
+  * Imported Upstream version 0.9.15
+
+ -- Jonas Genannt <genannt@debian.org>  Sat, 28 Nov 2015 10:38:35 +0100
+
+graphite-carbon (0.9.14-1) unstable; urgency=medium
+
+  * Team upload.
+  * Imported Upstream version 0.9.14
+  * d/p/wire_stats_events.patch: removed, upstream merged
+  * d/rules: remove unused example directory
+  * d/control: added dh-python as build-depends
+  * d/*.service: removed ExecReload (Closes: #791886)
+
+ -- Jonas Genannt <genannt@debian.org>  Sat, 21 Nov 2015 00:05:03 +0100
+
+graphite-carbon (0.9.13-1) unstable; urgency=low
+
+  * Team upload.
+  * Imported Upstream version 0.9.13 (Closes: #783179)
+  * d/watch: updated watch url
+  * removed patch twisted_daemonize, included by upstream
+  * refreshed patch carbon.conf.debian#
+  * added patch: wire state.events to events
+  * added readme about aggregator/relay unit files
+  * Systemd instance support for carbon-relay
+  * Systemd instance support for carbon-aggregator
+
+ -- Jonas Genannt <genannt@debian.org>  Mon, 04 May 2015 19:15:59 +0200
+
+graphite-carbon (0.9.12-4) unstable; urgency=low
+
+  * d/control
+    - fixed Vcs-Git url (Closes: #765568), Laban Mwangi <lmwangi@gmail.com>
+    - bumped standards version to 3.9.6, no changed needed
+
+ -- Jonas Genannt <jonas.genannt@capi2name.de>  Thu, 29 Jan 2015 12:05:44 +0100
+
 graphite-carbon (0.9.12-3pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging

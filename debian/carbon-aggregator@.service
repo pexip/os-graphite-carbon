@@ -1,0 +1,13 @@
+[Unit]
+Description=Graphite Carbon Aggregator %i
+After=network.target
+
+[Service]
+Type=forking
+StandardOutput=syslog
+StandardError=syslog
+ExecStart=/usr/bin/carbon-aggregator --config=/etc/carbon/carbon.conf --instance %i --pidfile=/var/run/carbon-aggregator-%i.pid --logdir=/var/log/carbon/ start
+PIDFile=/var/run/carbon-aggregator-%i.pid
+
+[Install]
+WantedBy=multi-user.target
