@@ -1,0 +1,13 @@
+diff --git a/lib/carbon/log.py b/lib/carbon/log.py
+index dbbd2e0..932f8a7 100644
+--- a/lib/carbon/log.py
++++ b/lib/carbon/log.py
+@@ -33,7 +33,7 @@ class CarbonLogFile(DailyLogFile):
+     # for read and write between Linux and BSD systems due
+     # to differences in fopen() between operating systems.
+     self._file.seek(0, os.SEEK_END)
+-    self.lastDate = self.toDate(os.stat(self.path)[8])
++    self.lastDate = self.toDate(os.fstat(self._file.fileno())[8])
+ 
+   def shouldRotate(self):
+     if self.enableRotation:
