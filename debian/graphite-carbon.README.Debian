@@ -8,7 +8,7 @@ carbon-aggregator
 carbon-aggregator can only started via Systemd Unit files.
 The unit file is able to start instances of your carbon-aggregator.
 
-The first instance should named named 'a', inside the carbon.conf file
+The first instance should named 'a', inside the carbon.conf file
 the a instance is named only [aggregator]
 
 enable the instance a on boot:

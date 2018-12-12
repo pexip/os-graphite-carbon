@@ -1,3 +1,55 @@
+graphite-carbon (1.1.4-2) unstable; urgency=medium
+
+  * Change maintainer back to tracker.
+  * ACK NMU from Christoph Martin.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 12 Dec 2018 11:13:58 +0100
+
+graphite-carbon (1.1.4-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Added myself as uploader after discussion with current maintainer.
+  * Remove useless patch for setup.py, call it with correct option instead.
+  * Rebased validate-storage-schemas.debian.patch.
+  * Switch to Python 3.
+  * Ran wrap-and-sort -bast.
+  * Switch to debhelper 10 (removed dh-systemd build-depends).
+  * VCS URLs pointing to Salsa.
+  * Removed export-dir from debian/gbp.conf: this is a local config.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 10 Dec 2018 14:46:25 +0100
+
+graphite-carbon (1.0.2-1.1) unstable; urgency=medium
+
+  * NMU
+  * VCS move to salsa
+  * change maintainer to tracker list (closes: #899529)
+
+ -- Christoph Martin <martin@uni-mainz.de>  Tue, 23 Oct 2018 14:42:36 +0200
+
+graphite-carbon (1.0.2-1) unstable; urgency=medium
+
+  [ Mathieu Parent ]
+  * Remove me from uploaders
+
+  [ Jonas Genannt ]
+  * Imported Upstream version 1.0.2 (Closes: #860194)
+  * Added Brazilian Portuguese translation
+    [Adriano Rafael Gomes] (Closes: #846524)
+  * d/control:
+    - Added rename to build depends (Closes: #874041)
+    - bumped standards/compat version
+    - updated to secure vcs urls
+    - changed my maintainer mail address
+    - added lsb-base to depends
+  * d/p/carbon.conf.debian.patch: updated to new upstream version
+  * d/p/disable_install_opt.patch: updated to new upstream version
+  * Manpages (d/*.1) fixed spelling error
+  * d/README.Debian: removed duplicate word
+  * d/*.service: added documentation keyword
+
+ -- Jonas Genannt <genannt@debian.org>  Tue, 19 Sep 2017 12:48:46 +0200
+
 graphite-carbon (0.9.15-1) unstable; urgency=medium
 
   * Team upload.

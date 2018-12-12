@@ -1,9 +1,22 @@
 #!/usr/bin/make -f
 
 %:
-	dh $@ --with python2,systemd
+	dh $@ --with python3,systemd
+
+override_dh_auto_clean:
+	echo "Do nothing..."
+
+override_dh_auto_install:
+	echo "Do nothing..."
+
+override_dh_auto_test:
+	echo "Do nothing..."
+
+override_dh_auto_build:
+	echo "Do nothing..."
 
 override_dh_install:
+	GRAPHITE_NO_PREFIX=True python3 setup.py install --install-layout=deb --root $(CURDIR)/debian/graphite-carbon
 	rename 's/\.py//' debian/graphite-carbon/usr/bin/*.py
 	# clean unneeded stuff
 	rm -rf debian/graphite-carbon/usr/conf
@@ -26,3 +39,7 @@ override_dh_systemd_enable:
 	dh_systemd_enable --name=carbon-cache
 	dh_systemd_enable --name=carbon-relay@ --no-enable
 	dh_systemd_enable --name=carbon-aggregator@ --no-enable
+
+override_dh_python3:
+	dh_python3 --shebang=/usr/bin/python3
+	

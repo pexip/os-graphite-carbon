@@ -2,9 +2,11 @@ Description: change default values for debian
 Author: Jonas Genannt <jonas.genannt@capi2name.de>
 Forwarded: not-needed
 
+diff --git a/conf/carbon.conf.example b/conf/carbon.conf.example
+index dbccf71..74d12d1 100644
 --- a/conf/carbon.conf.example
 +++ b/conf/carbon.conf.example
-@@ -30,14 +30,20 @@
+@@ -30,6 +30,12 @@
  #
  #LOCAL_DATA_DIR = /opt/graphite/storage/whisper/
  
@@ -14,16 +16,21 @@ Forwarded: not-needed
 +LOG_DIR        = /var/log/carbon/
 +PID_DIR        = /var/run/
 +
- # Enable daily log rotation. If disabled, carbon will automatically re-open
- # the file if it's rotated out of place (e.g. by logrotate daemon)
+ # Specify the database library used to store metric data on disk. Each database
+ # may have configurable options to change the behaviour of how it writes to
+ # persistent storage.
+@@ -43,12 +49,12 @@ DATABASE = whisper
+ 
+ # Enable daily log rotation. If disabled, a new file will be opened whenever the log file path no
+ # longer exists (i.e. it is removed or renamed)
 -ENABLE_LOGROTATION = True
 +ENABLE_LOGROTATION = False
  
  # Specify the user to drop privileges to
- # If this is blank carbon runs as the user that invokes it
+ # If this is blank carbon-cache runs as the user that invokes it
  # This user must have write access to the local data directory
 -USER =
 +USER = _graphite
- #
- # NOTE: The above settings must be set under [relay] and [aggregator]
- #       to take effect for those daemons as well
+ 
+ # Limit the size of the cache to avoid swapping or becoming CPU bound.
+ # Sorts and serving cache queries gets more expensive as the cache grows.
