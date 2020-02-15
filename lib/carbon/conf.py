@@ -19,10 +19,16 @@ import errno
 
 from os.path import join, dirname, normpath, exists, isdir
 from optparse import OptionParser
-from ConfigParser import ConfigParser
 
-import whisper
-from carbon import log
+try:
+    from ConfigParser import ConfigParser
+# ConfigParser is renamed to configparser in py3
+except ImportError:
+    from configparser import ConfigParser
+
+from carbon import log, state
+from carbon.database import TimeSeriesDatabase
+from carbon.routers import DatapointRouter
 from carbon.exceptions import CarbonConfigException
 
 from twisted.python import usage
@@ -32,44 +38,66 @@ defaults = dict(
   USER="",
   MAX_CACHE_SIZE=float('inf'),
   MAX_UPDATES_PER_SECOND=500,
-  MAX_UPDATES_PER_SECOND_ON_SHUTDOWN=1000,
   MAX_CREATES_PER_MINUTE=float('inf'),
+  MIN_TIMESTAMP_RESOLUTION=0,
+  MIN_TIMESTAMP_LAG=0,
   LINE_RECEIVER_INTERFACE='0.0.0.0',
   LINE_RECEIVER_PORT=2003,
-  LINE_RECEIVER_BACKLOG=1024,
   ENABLE_UDP_LISTENER=False,
   UDP_RECEIVER_INTERFACE='0.0.0.0',
   UDP_RECEIVER_PORT=2003,
   PICKLE_RECEIVER_INTERFACE='0.0.0.0',
   PICKLE_RECEIVER_PORT=2004,
-  PICKLE_RECEIVER_BACKLOG=1024,
+  MAX_RECEIVER_CONNECTIONS=float('inf'),
   CACHE_QUERY_INTERFACE='0.0.0.0',
   CACHE_QUERY_PORT=7002,
-  CACHE_QUERY_BACKLOG=1024,
   LOG_UPDATES=True,
+  LOG_CREATES=True,
   LOG_CACHE_HITS=True,
   LOG_CACHE_QUEUE_SORTS=True,
+  DATABASE='whisper',
   WHISPER_AUTOFLUSH=False,
   WHISPER_SPARSE_CREATE=False,
   WHISPER_FALLOCATE_CREATE=False,
   WHISPER_LOCK_WRITES=False,
+  WHISPER_FADVISE_RANDOM=False,
+  CERES_MAX_SLICE_GAP=80,
+  CERES_NODE_CACHING_BEHAVIOR='all',
+  CERES_SLICE_CACHING_BEHAVIOR='latest',
+  CERES_LOCK_WRITES=False,
   MAX_DATAPOINTS_PER_MESSAGE=500,
   MAX_AGGREGATION_INTERVALS=5,
-  FORWARD_ALL=False,
+  FORWARD_ALL=True,
   MAX_QUEUE_SIZE=1000,
-  QUEUE_LOW_WATERMARK_PCT = 0.8,
+  QUEUE_LOW_WATERMARK_PCT=0.8,
+  TIME_TO_DEFER_SENDING=0.0001,
   ENABLE_AMQP=False,
+  AMQP_METRIC_NAME_IN_BODY=False,
   AMQP_VERBOSE=False,
+  AMQP_SPEC=None,
   BIND_PATTERNS=['#'],
+  GRAPHITE_URL='http://127.0.0.1:80',
+  ENABLE_TAGS=True,
+  TAG_UPDATE_INTERVAL=100,
+  TAG_BATCH_SIZE=100,
+  TAG_QUEUE_SIZE=10000,
+  TAG_HASH_FILENAMES=True,
   ENABLE_MANHOLE=False,
   MANHOLE_INTERFACE='127.0.0.1',
   MANHOLE_PORT=7222,
   MANHOLE_USER="",
   MANHOLE_PUBLIC_KEY="",
   RELAY_METHOD='rules',
+  DYNAMIC_ROUTER=False,
+  DYNAMIC_ROUTER_MAX_RETRIES=5,
+  ROUTER_HASH_TYPE=None,
   REPLICATION_FACTOR=1,
-  DIVERSE_REPLICAS=False,
+  DIVERSE_REPLICAS=True,
   DESTINATIONS=[],
+  DESTINATION_PROTOCOL="pickle",
+  DESTINATION_TRANSPORT="none",
+  DESTINATION_SSL_CA=None,
+  DESTINATION_POOL_REPLICAS=False,
   USE_FLOW_CONTROL=True,
   USE_INSECURE_UNPICKLER=False,
   USE_WHITELIST=False,
@@ -77,11 +105,24 @@ defaults = dict(
   CARBON_METRIC_INTERVAL=60,
   CACHE_WRITE_STRATEGY='sorted',
   WRITE_BACK_FREQUENCY=None,
-  ENABLE_LOGROTATION=True,
-  LOG_LISTENER_CONNECTIONS=True,
+  MIN_RESET_STAT_FLOW=1000,
+  MIN_RESET_RATIO=0.9,
+  MIN_RESET_INTERVAL=121,
+  TCP_KEEPALIVE=True,
+  TCP_KEEPIDLE=10,
+  TCP_KEEPINTVL=30,
+  TCP_KEEPCNT=2,
+  USE_RATIO_RESET=False,
+  LOG_LISTENER_CONN_SUCCESS=True,
+  LOG_AGGREGATOR_MISSES=True,
   AGGREGATION_RULES='aggregation-rules.conf',
   REWRITE_RULES='rewrite-rules.conf',
   RELAY_RULES='relay-rules.conf',
+  ENABLE_LOGROTATION=True,
+  METRIC_CLIENT_IDLE_TIMEOUT=None,
+  CACHE_METRIC_NAMES_MAX=0,
+  CACHE_METRIC_NAMES_TTL=0,
+  RAVEN_DSN=None,
 )
 
 
@@ -92,7 +133,7 @@ def _process_alive(pid):
         try:
             os.kill(int(pid), 0)
             return True
-        except OSError, err:
+        except OSError as err:
             return err.errno == errno.EPERM
 
 
@@ -110,11 +151,12 @@ class OrderedConfigParser(ConfigParser):
 
     result = ConfigParser.read(self, path)
     sections = []
-    for line in open(path):
-      line = line.strip()
+    with open(path) as f:
+      for line in f:
+        line = line.strip()
 
-      if line.startswith('[') and line.endswith(']'):
-        sections.append(line[1:-1])
+        if line.startswith('[') and line.endswith(']'):
+          sections.append(line[1:-1])
 
     self._ordered_sections = sections
 
@@ -199,13 +241,23 @@ class CarbonCacheOptions(usage.Options):
         self["pidfile"] = pidfile
 
         # Enforce a default umask of '022' if none was set.
-        if not self.parent.has_key("umask") or self.parent["umask"] is None:
-            self.parent["umask"] = 022
+        if "umask" not in self.parent or self.parent["umask"] is None:
+            self.parent["umask"] = 0o022
 
         # Read extra settings from the configuration file.
         program_settings = read_config(program, self)
         settings.update(program_settings)
         settings["program"] = program
+
+        # Normalize and expand paths
+        def cleanpath(path):
+          return os.path.normpath(os.path.expanduser(path))
+        settings["STORAGE_DIR"] = cleanpath(settings["STORAGE_DIR"])
+        settings["LOCAL_DATA_DIR"] = cleanpath(settings["LOCAL_DATA_DIR"])
+        settings["WHITELISTS_DIR"] = cleanpath(settings["WHITELISTS_DIR"])
+        settings["PID_DIR"] = cleanpath(settings["PID_DIR"])
+        settings["LOG_DIR"] = cleanpath(settings["LOG_DIR"])
+        settings["pidfile"] = cleanpath(settings["pidfile"])
 
         # Set process uid/gid by changing the parent config, if a user was
         # provided in the configuration file.
@@ -219,33 +271,27 @@ class CarbonCacheOptions(usage.Options):
 
         storage_schemas = join(settings["CONF_DIR"], "storage-schemas.conf")
         if not exists(storage_schemas):
-            print "Error: missing required config %s" % storage_schemas
+            print("Error: missing required config %s" % storage_schemas)
             sys.exit(1)
 
-        if settings.WHISPER_AUTOFLUSH:
-            log.msg("Enabling Whisper autoflush")
-            whisper.AUTOFLUSH = True
-
-        if settings.WHISPER_FALLOCATE_CREATE:
-            if whisper.CAN_FALLOCATE:
-                log.msg("Enabling Whisper fallocate support")
-            else:
-                log.err("WHISPER_FALLOCATE_CREATE is enabled but linking failed.")
-
-        if settings.WHISPER_LOCK_WRITES:
-            if whisper.CAN_LOCK:
-                log.msg("Enabling Whisper file locking")
-                whisper.LOCK = True
-            else:
-                log.err("WHISPER_LOCK_WRITES is enabled but import of fcntl module failed.")
-
-        if settings.CACHE_WRITE_STRATEGY not in ('sorted', 'max', 'naive'):
+        if settings.CACHE_WRITE_STRATEGY not in ('timesorted', 'sorted', 'max', 'naive'):
             log.err("%s is not a valid value for CACHE_WRITE_STRATEGY, defaulting to %s" %
                     (settings.CACHE_WRITE_STRATEGY, defaults['CACHE_WRITE_STRATEGY']))
         else:
-            log.msg("Using %s write strategy for cache" %
-                    settings.CACHE_WRITE_STRATEGY)
-        if not "action" in self:
+            log.msg("Using %s write strategy for cache" % settings.CACHE_WRITE_STRATEGY)
+
+        # Database-specific settings
+        database = settings.DATABASE
+        if database not in TimeSeriesDatabase.plugins:
+            print("No database plugin implemented for '%s'" % database)
+            raise SystemExit(1)
+
+        database_class = TimeSeriesDatabase.plugins[database]
+        state.database = database_class(settings)
+
+        settings.CACHE_SIZE_LOW_WATERMARK = settings.MAX_CACHE_SIZE * 0.95
+
+        if "action" not in self:
             self["action"] = "start"
         self.handleAction()
 
@@ -254,7 +300,8 @@ class CarbonCacheOptions(usage.Options):
         # are set to log to syslog, then use that instead.
         if not self["debug"]:
             if self.parent.get("syslog", None):
-                log.logToSyslog(self.parent["prefix"])
+                prefix = "%s-%s[%d]" % (program, self["instance"], os.getpid())
+                log.logToSyslog(prefix)
             elif not self.parent["nodaemon"]:
                 logdir = settings.LOG_DIR
                 if not isdir(logdir):
@@ -295,21 +342,24 @@ class CarbonCacheOptions(usage.Options):
 
         if action == "stop":
             if not exists(pidfile):
-                print "Pidfile %s does not exist" % pidfile
+                print("Pidfile %s does not exist" % pidfile)
                 raise SystemExit(0)
             pf = open(pidfile, 'r')
             try:
                 pid = int(pf.read().strip())
                 pf.close()
-            except IOError:
-                print "Could not read pidfile %s" % pidfile
+            except ValueError:
+                print("Failed to parse pid from pidfile %s" % pidfile)
                 raise SystemExit(1)
-            print "Sending kill signal to pid %d" % pid
+            except IOError:
+                print("Could not read pidfile %s" % pidfile)
+                raise SystemExit(1)
+            print("Sending kill signal to pid %d" % pid)
             try:
                 os.kill(pid, 15)
-            except OSError, e:
+            except OSError as e:
                 if e.errno == errno.ESRCH:
-                    print "No process with pid %d running" % pid
+                    print("No process with pid %d running" % pid)
                 else:
                     raise
 
@@ -317,22 +367,25 @@ class CarbonCacheOptions(usage.Options):
 
         elif action == "status":
             if not exists(pidfile):
-                print "%s (instance %s) is not running" % (program, instance)
+                print("%s (instance %s) is not running" % (program, instance))
                 raise SystemExit(1)
             pf = open(pidfile, "r")
             try:
                 pid = int(pf.read().strip())
                 pf.close()
+            except ValueError:
+                print("Failed to parse pid from pidfile %s" % pidfile)
+                raise SystemExit(1)
             except IOError:
-                print "Failed to read pid from %s" % pidfile
+                print("Failed to read pid from %s" % pidfile)
                 raise SystemExit(1)
 
             if _process_alive(pid):
-                print ("%s (instance %s) is running with pid %d" %
-                       (program, instance, pid))
+                print("%s (instance %s) is running with pid %d" %
+                      (program, instance, pid))
                 raise SystemExit(0)
             else:
-                print "%s (instance %s) is not running" % (program, instance)
+                print("%s (instance %s) is not running" % (program, instance))
                 raise SystemExit(1)
 
         elif action == "start":
@@ -341,25 +394,38 @@ class CarbonCacheOptions(usage.Options):
                 try:
                     pid = int(pf.read().strip())
                     pf.close()
+                except ValueError:
+                    print("Failed to parse pid from pidfile %s" % pidfile)
+                    raise SystemExit(1)
                 except IOError:
-                    print "Could not read pidfile %s" % pidfile
+                    print("Could not read pidfile %s" % pidfile)
                     raise SystemExit(1)
                 if _process_alive(pid):
-                    print ("%s (instance %s) is already running with pid %d" %
-                           (program, instance, pid))
+                    print("%s (instance %s) is already running with pid %d" %
+                          (program, instance, pid))
                     raise SystemExit(1)
                 else:
-                    print "Removing stale pidfile %s" % pidfile
+                    print("Removing stale pidfile %s" % pidfile)
                     try:
                         os.unlink(pidfile)
                     except IOError:
-                        print "Could not remove pidfile %s" % pidfile
+                        print("Could not remove pidfile %s" % pidfile)
+            # Try to create the PID directory
+            else:
+                if not os.path.exists(settings["PID_DIR"]):
+                    try:
+                        os.makedirs(settings["PID_DIR"])
+                    except OSError as exc:  # Python >2.5
+                        if exc.errno == errno.EEXIST and os.path.isdir(settings["PID_DIR"]):
+                           pass
+                        else:
+                           raise
 
-            print "Starting %s (instance %s)" % (program, instance)
+            print("Starting %s (instance %s)" % (program, instance))
 
         else:
-            print "Invalid action '%s'" % action
-            print "Valid actions: start stop status"
+            print("Invalid action '%s'" % action)
+            print("Valid actions: start stop status")
             raise SystemExit(1)
 
 
@@ -368,7 +434,7 @@ class CarbonAggregatorOptions(CarbonCacheOptions):
     optParameters = [
         ["rules", "", None, "Use the given aggregation rules file."],
         ["rewrite-rules", "", None, "Use the given rewrite rules file."],
-        ] + CarbonCacheOptions.optParameters
+    ] + CarbonCacheOptions.optParameters
 
     def postOptions(self):
         CarbonCacheOptions.postOptions(self)
@@ -387,7 +453,7 @@ class CarbonRelayOptions(CarbonCacheOptions):
     optParameters = [
         ["rules", "", None, "Use the given relay rules file."],
         ["aggregation-rules", "", None, "Use the given aggregation rules file."],
-        ] + CarbonCacheOptions.optParameters
+    ] + CarbonCacheOptions.optParameters
 
     def postOptions(self):
         CarbonCacheOptions.postOptions(self)
@@ -399,11 +465,11 @@ class CarbonRelayOptions(CarbonCacheOptions):
             self["aggregation-rules"] = join(settings["CONF_DIR"], settings['AGGREGATION_RULES'])
         settings["aggregation-rules"] = self["aggregation-rules"]
 
-        if settings["RELAY_METHOD"] not in ("rules", "consistent-hashing", "aggregated-consistent-hashing"):
-            print ("In carbon.conf, RELAY_METHOD must be either 'rules' or "
-                   "'consistent-hashing' or 'aggregated-consistent-hashing'. Invalid value: '%s'" %
-                   settings.RELAY_METHOD)
-            sys.exit(1)
+        router = settings["RELAY_METHOD"]
+        if router not in DatapointRouter.plugins:
+            print("In carbon.conf, RELAY_METHOD must be one of %s. "
+                  "Invalid value: '%s'" % (', '.join(DatapointRouter.plugins), router))
+            raise SystemExit(1)
 
 
 def get_default_parser(usage="%prog [options] <start|stop|status>"):
@@ -450,13 +516,21 @@ def get_default_parser(usage="%prog [options] <start|stop|status>"):
         "--instance",
         default='a',
         help="Manage a specific carbon instance")
-
+    parser.add_option(
+        "--logfile",
+        default=None,
+        help="Log to a specified file, - for stdout")
+    parser.add_option(
+        "--logger",
+        default=None,
+        help="A fully-qualified name to a log observer factory to use for the initial log "
+             "observer. Takes precedence over --logfile and --syslog (when available).")
     return parser
 
 
 def get_parser(name):
     parser = get_default_parser()
-    if name == "carbon-aggregator":
+    if "carbon-aggregator" in name:
         parser.add_option(
             "--rules",
             default=None,
@@ -508,7 +582,7 @@ def read_config(program, options, **kwargs):
         graphite_root = os.environ.get('GRAPHITE_ROOT')
     if graphite_root is None:
         raise CarbonConfigException("Either ROOT_DIR or GRAPHITE_ROOT "
-                         "needs to be provided.")
+                                    "needs to be provided.")
 
     # Default config directory to root-relative, unless overriden by the
     # 'GRAPHITE_CONF_DIR' environment variable.
@@ -529,15 +603,16 @@ def read_config(program, options, **kwargs):
                         os.environ.get("GRAPHITE_STORAGE_DIR",
                                        join(graphite_root, "storage")))
 
-    # By default, everything is written to subdirectories of the storage dir.
-    settings.setdefault(
-        "PID_DIR", settings["STORAGE_DIR"])
-    settings.setdefault(
-        "LOG_DIR", join(settings["STORAGE_DIR"], "log", program))
-    settings.setdefault(
-        "LOCAL_DATA_DIR", join(settings["STORAGE_DIR"], "whisper"))
-    settings.setdefault(
-        "WHITELISTS_DIR", join(settings["STORAGE_DIR"], "lists"))
+    def update_STORAGE_DIR_deps():
+        # By default, everything is written to subdirectories of the storage dir.
+        settings.setdefault(
+            "PID_DIR", settings["STORAGE_DIR"])
+        settings.setdefault(
+            "LOG_DIR", join(settings["STORAGE_DIR"], "log", program))
+        settings.setdefault(
+            "LOCAL_DATA_DIR", join(settings["STORAGE_DIR"], "whisper"))
+        settings.setdefault(
+            "WHITELISTS_DIR", join(settings["STORAGE_DIR"], "lists"))
 
     # Read configuration options from program-specific section.
     section = program[len("carbon-"):]
@@ -548,6 +623,7 @@ def read_config(program, options, **kwargs):
 
     settings.readFrom(config, section)
     settings.setdefault("instance", options["instance"])
+    update_STORAGE_DIR_deps()
 
     # If a specific instance of the program is specified, augment the settings
     # with the instance-specific settings and provide sane defaults for
@@ -557,15 +633,14 @@ def read_config(program, options, **kwargs):
                           "%s:%s" % (section, options["instance"]))
         settings["pidfile"] = (
             options["pidfile"] or
-            join(settings["PID_DIR"], "%s-%s.pid" %
-                 (program, options["instance"])))
-        settings["LOG_DIR"] = (options["logdir"] or
-                              join(settings["LOG_DIR"],
-                                "%s-%s" % (program, options["instance"])))
+            join(settings["PID_DIR"], "%s-%s.pid" % (program, options["instance"])))
+        settings["LOG_DIR"] = (
+            options["logdir"] or
+            join(settings["LOG_DIR"], "%s-%s" % (program, options["instance"])))
     else:
         settings["pidfile"] = (
-            options["pidfile"] or
-            join(settings["PID_DIR"], '%s.pid' % program))
+            options["pidfile"] or join(settings["PID_DIR"], '%s.pid' % program))
         settings["LOG_DIR"] = (options["logdir"] or settings["LOG_DIR"])
 
+    update_STORAGE_DIR_deps()
     return settings
