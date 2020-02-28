@@ -1,24 +1,42 @@
-import copy
+import sys
 import os
 import pwd
-import sys
-import __builtin__
+import re
 
-from os.path import abspath, basename, dirname
 try:
-  from cStringIO import StringIO
+  import builtins as __builtin__
 except ImportError:
-  from StringIO import StringIO
+  import __builtin__
+
+from hashlib import sha256
+from os.path import abspath, basename, dirname
+import socket
+from time import sleep, time
+from twisted.python.util import initgroups
+from twisted.scripts.twistd import runApp
+from carbon.log import setDebugEnabled
+try:
+    from OpenSSL import SSL
+except ImportError:
+    SSL = None
+
+
+# BytesIO is needed on py3 as StringIO does not operate on byte input anymore
+# We could use BytesIO on py2 as well but it is slower than StringIO
+if sys.version_info >= (3, 0):
+  from io import BytesIO as StringIO
+else:
+  try:
+    from cStringIO import StringIO
+  except ImportError:
+    from StringIO import StringIO
+
 try:
   import cPickle as pickle
   USING_CPICKLE = True
 except ImportError:
   import pickle
   USING_CPICKLE = False
-
-from time import sleep, time
-from twisted.python.util import initgroups
-from twisted.scripts.twistd import runApp
 
 
 def dropprivs(user):
@@ -27,6 +45,26 @@ def dropprivs(user):
   os.setregid(gid, gid)
   os.setreuid(uid, uid)
   return (uid, gid)
+
+
+def enableTcpKeepAlive(transport, enable, settings):
+  if not enable or not hasattr(transport, 'getHandle'):
+    return
+
+  fd = transport.getHandle()
+  if SSL:
+      if isinstance(fd, SSL.Connection):
+          return
+  if fd.type != socket.SOCK_STREAM:
+    return
+
+  transport.setTcpKeepAlive(1)
+  for attr in ['TCP_KEEPIDLE', 'TCP_KEEPINTVL', 'TCP_KEEPCNT']:
+    flag = getattr(socket, attr, None)
+    value = getattr(settings, attr, None)
+    if not flag or value is None:
+      continue
+    fd.setsockopt(socket.SOL_TCP, flag, value)
 
 
 def run_twistd_plugin(filename):
@@ -58,7 +96,7 @@ def run_twistd_plugin(filename):
     # If no reactor was selected yet, try to use the epoll reactor if
     # available.
     try:
-        from twisted.internet import epollreactor
+        from twisted.internet import epollreactor  # noqa: F401
         twistd_options.append("--reactor=epoll")
     except ImportError:
         pass
@@ -73,6 +111,10 @@ def run_twistd_plugin(filename):
         twistd_options.extend(["--pidfile", options.pidfile])
     if options.umask:
         twistd_options.extend(["--umask", options.umask])
+    if options.logger:
+        twistd_options.extend(["--logger", options.logger])
+    if options.logger:
+        twistd_options.extend(["--logfile", options.logfile])
     if options.syslog:
         twistd_options.append("--syslog")
 
@@ -81,12 +123,13 @@ def run_twistd_plugin(filename):
 
     if options.debug:
         twistd_options.append("--debug")
+        setDebugEnabled(True)
 
     for option_name, option_value in vars(options).items():
-        if (option_value is not None and
-            option_name not in ("debug", "profile", "profiler", "pidfile", "umask", "nodaemon", "syslog")):
-            twistd_options.extend(["--%s" % option_name.replace("_", "-"),
-                                   option_value])
+        if (option_value is not None and option_name not in (
+                "debug", "profile", "profiler", "pidfile", "umask", "nodaemon", "syslog",
+                "logger", "logfile")):
+            twistd_options.extend(["--%s" % option_name.replace("_", "-"), option_value])
 
     # Finally, append extra args so that twistd has a chance to process them.
     twistd_options.extend(args)
@@ -97,22 +140,76 @@ def run_twistd_plugin(filename):
     runApp(config)
 
 
-def parseDestinations(destination_strings):
-  destinations = []
-
-  for dest_string in destination_strings:
-    parts = dest_string.strip().split(':')
-    if len(parts) == 2:
-      server, port = parts
-      instance = None
-    elif len(parts) == 3:
-      server, port, instance = parts
+def parseDestination(dest_string):
+    s = dest_string.strip()
+    bidx = s.rfind(']:')    # find closing bracket and following colon.
+    cidx = s.find(':')
+    if s.startswith('[') and bidx is not None:
+        server = s[1:bidx]
+        port = s[bidx + 2:]
+    elif cidx is not None:
+        server = s[:cidx]
+        port = s[cidx + 1:]
     else:
-      raise ValueError("Invalid destination string \"%s\"" % dest_string)
+        raise ValueError("Invalid destination string \"%s\"" % dest_string)
 
-    destinations.append((server, int(port), instance))
+    if ':' in port:
+        port, _, instance = port.partition(':')
+    else:
+        instance = None
 
-  return destinations
+    return server, int(port), instance
+
+
+def parseDestinations(destination_strings):
+    return [parseDestination(dest_string) for dest_string in destination_strings]
+
+
+# Yes this is duplicated in whisper. Yes, duplication is bad.
+# But the code is needed in both places and we do not want to create
+# a dependency on whisper especiaily as carbon moves toward being a more
+# generic storage service that can use various backends.
+UnitMultipliers = {
+  's': 1,
+  'm': 60,
+  'h': 60 * 60,
+  'd': 60 * 60 * 24,
+  'w': 60 * 60 * 24 * 7,
+  'y': 60 * 60 * 24 * 365,
+}
+
+
+def getUnitString(s):
+  if s not in UnitMultipliers:
+    raise ValueError("Invalid unit '%s'" % s)
+  return s
+
+
+def parseRetentionDef(retentionDef):
+  import re
+  (precision, points) = retentionDef.strip().split(':')
+
+  if precision.isdigit():
+    precision = int(precision) * UnitMultipliers[getUnitString('s')]
+  else:
+    precision_re = re.compile(r'^(\d+)([a-z]+)$')
+    match = precision_re.match(precision)
+    if match:
+      precision = int(match.group(1)) * UnitMultipliers[getUnitString(match.group(2))]
+    else:
+      raise ValueError("Invalid precision specification '%s'" % precision)
+
+  if points.isdigit():
+    points = int(points)
+  else:
+    points_re = re.compile(r'^(\d+)([a-z]+)$')
+    match = points_re.match(points)
+    if match:
+      points = int(match.group(1)) * UnitMultipliers[getUnitString(match.group(2))] / precision
+    else:
+      raise ValueError("Invalid retention specification '%s'" % points)
+
+  return (precision, points)
 
 
 # This whole song & dance is due to pickle being insecure
@@ -129,11 +226,11 @@ if USING_CPICKLE:
 
     @classmethod
     def find_class(cls, module, name):
-      if not module in cls.PICKLE_SAFE:
+      if module not in cls.PICKLE_SAFE:
         raise pickle.UnpicklingError('Attempting to unpickle unsafe module %s' % module)
       __import__(module)
       mod = sys.modules[module]
-      if not name in cls.PICKLE_SAFE[module]:
+      if name not in cls.PICKLE_SAFE[module]:
         raise pickle.UnpicklingError('Attempting to unpickle unsafe class %s' % name)
       return getattr(mod, name)
 
@@ -151,17 +248,20 @@ else:
     }
 
     def find_class(self, module, name):
-      if not module in self.PICKLE_SAFE:
+      if module not in self.PICKLE_SAFE:
         raise pickle.UnpicklingError('Attempting to unpickle unsafe module %s' % module)
       __import__(module)
       mod = sys.modules[module]
-      if not name in self.PICKLE_SAFE[module]:
+      if name not in self.PICKLE_SAFE[module]:
         raise pickle.UnpicklingError('Attempting to unpickle unsafe class %s' % name)
       return getattr(mod, name)
 
     @classmethod
     def loads(cls, pickle_string):
-      return cls(StringIO(pickle_string)).load()
+      if sys.version_info >= (3, 0):
+        return cls(StringIO(pickle_string), encoding='utf-8').load()
+      else:
+        return cls(StringIO(pickle_string)).load()
 
 
 def get_unpickler(insecure=False):
@@ -190,15 +290,19 @@ class TokenBucket(object):
     if cost <= self.tokens:
       self._tokens -= cost
       return True
-    else:
-      if blocking:
-        tokens_needed = cost - self._tokens
-        seconds_per_token = 1 / self.fill_rate
-        seconds_left = seconds_per_token * self.fill_rate
-        sleep(self.timestamp + seconds_left - time())
-        self._tokens -= cost
-        return True
+
+    if not blocking:
       return False
+
+    tokens_needed = cost - self._tokens
+    seconds_per_token = 1 / self.fill_rate
+    seconds_left = seconds_per_token * tokens_needed
+    time_to_sleep = self.timestamp + seconds_left - time()
+    if time_to_sleep > 0:
+      sleep(time_to_sleep)
+
+    self._tokens -= cost
+    return True
 
   def setCapacityAndFillRate(self, new_capacity, new_fill_rate):
     delta = float(new_capacity) - self.capacity
@@ -218,40 +322,140 @@ class TokenBucket(object):
     return self._tokens
 
 
-class defaultdict(dict):
-  def __init__(self, default_factory=None, *a, **kw):
-    if (default_factory is not None and not hasattr(default_factory, '__call__')):
-      raise TypeError('first argument must be callable')
-    dict.__init__(self, *a, **kw)
-    self.default_factory = default_factory
+class PluginRegistrar(type):
+  """Clever subclass detection hack that makes plugin loading trivial.
+  To use this, define an abstract base class for plugin implementations
+  that defines the plugin API. Give that base class a __metaclass__ of
+  PluginRegistrar, and define a 'plugins = {}' class member. Subclasses
+  defining a 'plugin_name' member will then appear in the plugins dict.
+  """
+  def __init__(classObj, name, bases, members):
+    super(PluginRegistrar, classObj).__init__(name, bases, members)
+    if hasattr(classObj, 'plugin_name'):
+      classObj.plugins[classObj.plugin_name] = classObj
 
-  def __getitem__(self, key):
-    try:
-      return dict.__getitem__(self, key)
-    except KeyError:
-      return self.__missing__(key)
 
-  def __missing__(self, key):
-    if self.default_factory is None:
-      raise KeyError(key)
-    self[key] = value = self.default_factory()
-    return value
+class TaggedSeries(object):
+  @classmethod
+  def parse(cls, path):
+    # if path is in openmetrics format: metric{tag="value",...}
+    if path[-2:] == '"}' and '{' in path:
+      return cls.parse_openmetrics(path)
 
-  def __reduce__(self):
-    if self.default_factory is None:
-      args = tuple()
-    else:
-      args = self.default_factory,
-    return type(self), args, None, None, self.iteritems()
+    # path is a carbon path with optional tags: metric;tag=value;...
+    return cls.parse_carbon(path)
 
-  def copy(self):
-    return self.__copy__()
+  @classmethod
+  def parse_openmetrics(cls, path):
+    """parse a path in openmetrics format: metric{tag="value",...}
 
-  def __copy__(self):
-    return type(self)(self.default_factory, self)
+    https://github.com/RichiH/OpenMetrics
+    """
+    (metric, rawtags) = path[0:-1].split('{', 2)
+    if not metric:
+      raise Exception('Cannot parse path %s, no metric found' % path)
 
-  def __deepcopy__(self, memo):
-    return type(self)(self.default_factory, copy.deepcopy(self.items()))
+    tags = {}
 
-  def __repr__(self):
-      return 'defaultdict(%s, %s)' % (self.default_factory, dict.__repr__(self))
+    while len(rawtags) > 0:
+      m = re.match(r'([^=]+)="((?:[\\]["\\]|[^"\\])+)"(:?,|$)', rawtags)
+      if not m:
+        raise Exception('Cannot parse path %s, invalid segment %s' % (path, rawtags))
+
+      tags[m.group(1)] = m.group(2).replace(r'\"', '"').replace(r'\\', '\\')
+      rawtags = rawtags[len(m.group(0)):]
+
+    tags['name'] = metric
+    return cls(metric, tags)
+
+  @classmethod
+  def parse_carbon(cls, path):
+    """parse a carbon path with optional tags: metric;tag=value;..."""
+    segments = path.split(';')
+
+    metric = segments[0]
+    if not metric:
+      raise Exception('Cannot parse path %s, no metric found' % path)
+
+    tags = {}
+
+    for segment in segments[1:]:
+      tag = segment.split('=', 1)
+      if len(tag) != 2 or not tag[0]:
+        raise Exception('Cannot parse path %s, invalid segment %s' % (path, segment))
+
+      tags[tag[0]] = tag[1]
+
+    tags['name'] = metric
+    return cls(metric, tags)
+
+  @staticmethod
+  def format(tags):
+    return tags.get('name', '') + ''.join(sorted([
+      ';%s=%s' % (tag, value)
+      for tag, value in tags.items()
+      if tag != 'name'
+    ]))
+
+  @staticmethod
+  def encode(metric, sep='.', hash_only=False):
+    """
+    Helper function to encode tagged series for storage in whisper etc
+
+    When tagged series are detected, they are stored in a separate hierarchy of folders under a
+    top-level _tagged folder, where subfolders are created by using the first 3 hex digits of the
+    sha256 hash of the tagged metric path (4096 possible folders), and second-level subfolders are
+    based on the following 3 hex digits (another 4096 possible folders) for a total of 4096^2
+    possible subfolders. The metric files themselves are created with any . in the metric path
+    replaced with -, to avoid any issues where metrics, tags or values containing a '.' would end
+    up creating further subfolders. This helper is used by both whisper and ceres, but by design
+    each carbon database and graphite-web finder is responsible for handling its own encoding so
+    that different backends can create their own schemes if desired.
+
+    The hash_only parameter can be set to True to use the hash as the filename instead of a
+    human-readable name.  This avoids issues with filename length restrictions, at the expense of
+    being unable to decode the filename and determine the original metric name.
+
+    A concrete example:
+
+    .. code-block:: none
+
+      some.metric;tag1=value2;tag2=value.2
+
+      with sha256 hash starting effaae would be stored in:
+
+      _tagged/eff/aae/some-metric;tag1=value2;tag2=value-2.wsp (whisper)
+      _tagged/eff/aae/some-metric;tag1=value2;tag2=value-2 (ceres)
+
+    """
+    if ';' in metric:
+      metric_hash = sha256(metric.encode('utf8')).hexdigest()
+      return sep.join([
+        '_tagged',
+        metric_hash[0:3],
+        metric_hash[3:6],
+        metric_hash if hash_only else metric.replace('.', '_DOT_')
+      ])
+
+    # metric isn't tagged, just replace dots with the separator and trim any leading separator
+    return metric.replace('.', sep).lstrip(sep)
+
+  @staticmethod
+  def decode(path, sep='.'):
+    """
+    Helper function to decode tagged series from storage in whisper etc
+    """
+    if path.startswith('_tagged'):
+      return path.split(sep, 3)[-1].replace('_DOT_', '.')
+
+    # metric isn't tagged, just replace the separator with dots
+    return path.replace(sep, '.')
+
+  def __init__(self, metric, tags, series_id=None):
+    self.metric = metric
+    self.tags = tags
+    self.id = series_id
+
+  @property
+  def path(self):
+    return self.__class__.format(self.tags)

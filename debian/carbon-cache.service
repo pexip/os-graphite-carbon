@@ -1,6 +1,7 @@
 [Unit]
 Description=Graphite Carbon Cache
 After=network.target
+Documentation=https://graphite.readthedocs.io
 
 [Service]
 Type=forking

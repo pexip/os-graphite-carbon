@@ -31,17 +31,23 @@ This program can be started standalone for testing or using carbon-cache.py
 (see example config file provided)
 """
 import sys
+
 import os
 import socket
 from optparse import OptionParser
 
-from twisted.python.failure import Failure
-from twisted.internet.defer import deferredGenerator, waitForDeferred
+from twisted.internet.defer import inlineCallbacks
 from twisted.internet import reactor
 from twisted.internet.protocol import ReconnectingClientFactory
-from txamqp.protocol import AMQClient
-from txamqp.client import TwistedDelegate
-import txamqp.spec
+from twisted.application.internet import TCPClient
+
+# txamqp is currently not ported to py3
+try:
+  from txamqp.protocol import AMQClient
+  from txamqp.client import TwistedDelegate
+  import txamqp.spec
+except ImportError:
+  raise ImportError
 
 try:
     import carbon
@@ -50,12 +56,41 @@ except ImportError:
     LIB_DIR = os.path.dirname(os.path.dirname(__file__))
     sys.path.insert(0, LIB_DIR)
 
-import carbon.protocols #satisfy import order requirements
+import carbon.protocols  # NOQA satisfy import order requirements
+from carbon.protocols import CarbonServerProtocol
 from carbon.conf import settings
-from carbon import log, events, instrumentation
+from carbon import log, events
 
 
 HOSTNAME = socket.gethostname().split('.')[0]
+
+
+class AMQPProtocol(CarbonServerProtocol):
+    plugin_name = "amqp"
+
+    @classmethod
+    def build(cls, root_service):
+        if not settings.ENABLE_AMQP:
+            return
+
+        amqp_host = settings.AMQP_HOST
+        amqp_port = settings.AMQP_PORT
+        amqp_user = settings.AMQP_USER
+        amqp_password = settings.AMQP_PASSWORD
+        amqp_verbose = settings.AMQP_VERBOSE
+        amqp_vhost = settings.AMQP_VHOST
+        amqp_spec = settings.AMQP_SPEC
+        amqp_exchange_name = settings.AMQP_EXCHANGE
+
+        factory = createAMQPListener(
+            amqp_user,
+            amqp_password,
+            vhost=amqp_vhost,
+            spec=amqp_spec,
+            exchange_name=amqp_exchange_name,
+            verbose=amqp_verbose)
+        service = TCPClient(amqp_host, amqp_port, factory)
+        service.setServiceParent(root_service)
 
 
 class AMQPGraphiteProtocol(AMQClient):
@@ -63,65 +98,45 @@ class AMQPGraphiteProtocol(AMQClient):
 
     consumer_tag = "graphite_consumer"
 
-    @deferredGenerator
+    @inlineCallbacks
     def connectionMade(self):
-        AMQClient.connectionMade(self)
+        yield AMQClient.connectionMade(self)
         log.listener("New AMQP connection made")
-        self.setup()
-        wfd = waitForDeferred(self.receive_loop())
-        yield wfd
+        yield self.setup()
+        yield self.receive_loop()
 
-    @deferredGenerator
+    @inlineCallbacks
     def setup(self):
         exchange = self.factory.exchange_name
 
-        d = self.authenticate(self.factory.username, self.factory.password)
-        wfd = waitForDeferred(d)
-        yield wfd
-
-        wfd = waitForDeferred(self.channel(1))
-        yield wfd
-        chan = wfd.getResult()
-
-        wfd = waitForDeferred(chan.channel_open())
-        yield wfd
+        yield self.authenticate(self.factory.username, self.factory.password)
+        chan = yield self.channel(1)
+        yield chan.channel_open()
 
         # declare the exchange and queue
-        d = chan.exchange_declare(exchange=exchange, type="topic",
-                                  durable=True, auto_delete=False)
-        wfd = waitForDeferred(d)
-        yield wfd
+        yield chan.exchange_declare(exchange=exchange, type="topic",
+                                    durable=True, auto_delete=False)
 
         # we use a private queue to avoid conflicting with existing bindings
-        wfd = waitForDeferred(chan.queue_declare(exclusive=True))
-        yield wfd
-        reply = wfd.getResult()
+        reply = yield chan.queue_declare(exclusive=True)
         my_queue = reply.queue
 
         # bind each configured metric pattern
         for bind_pattern in settings.BIND_PATTERNS:
-            log.listener("binding exchange '%s' to queue '%s' with pattern %s" \
+            log.listener("binding exchange '%s' to queue '%s' with pattern %s"
                          % (exchange, my_queue, bind_pattern))
-            d = chan.queue_bind(exchange=exchange, queue=my_queue,
-                                routing_key=bind_pattern)
-            wfd = waitForDeferred(d)
-            yield wfd
+            yield chan.queue_bind(exchange=exchange, queue=my_queue,
+                                  routing_key=bind_pattern)
 
-        d = chan.basic_consume(queue=my_queue, no_ack=True,
-                               consumer_tag=self.consumer_tag)
-        wfd = waitForDeferred(d)
-        yield wfd
+        yield chan.basic_consume(queue=my_queue, no_ack=True,
+                                 consumer_tag=self.consumer_tag)
 
-    @deferredGenerator
+    @inlineCallbacks
     def receive_loop(self):
-        wfd = waitForDeferred(self.queue(self.consumer_tag))
-        yield wfd
-        queue = wfd.getResult()
+        queue = yield self.queue(self.consumer_tag)
 
         while True:
-            wfd = waitForDeferred(queue.get())
-            yield wfd
-            msg = wfd.getResult()
+            msg = yield queue.get()
             self.processMessage(msg)
 
     def processMessage(self, message):
@@ -141,7 +156,7 @@ class AMQPGraphiteProtocol(AMQClient):
                     metric, value, timestamp = line.split()
                 else:
                     value, timestamp = line.split()
-                datapoint = ( float(timestamp), float(value) )
+                datapoint = (float(timestamp), float(value))
                 if datapoint[1] != datapoint[1]:  # filter out NaN values
                     continue
             except ValueError:
@@ -175,6 +190,7 @@ class AMQPReconnectingFactory(ReconnectingClientFactory):
         self.verbose = verbose
 
     def buildProtocol(self, addr):
+        self.resetDelay()
         p = self.protocol(self.delegate, self.vhost, self.spec)
         p.factory = self
         return p
@@ -239,11 +255,11 @@ def main():
 
     (options, args) = parser.parse_args()
 
-
     startReceiver(options.host, options.port, options.username,
                   options.password, vhost=options.vhost,
                   exchange_name=options.exchange, verbose=options.verbose)
     reactor.run()
+
 
 if __name__ == "__main__":
     main()
