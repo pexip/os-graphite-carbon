@@ -1,3 +1,12 @@
+graphite-carbon (1.1.7-1) unstable; urgency=high
+
+  [ Peter Gervai ]
+  * Non-maintainer upload.
+  * New upstream release:
+    - fixes hard crash (Closes: #923464)
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 16 Jul 2020 14:26:46 +0200
+
 graphite-carbon (1.1.4-2) unstable; urgency=medium
 
   * Change maintainer back to tracker.
