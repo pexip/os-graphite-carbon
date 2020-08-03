@@ -1,3 +1,9 @@
+graphite-carbon (1.1.4-2pexip4) pexip; urgency=medium
+
+  * Take two patches from upstream to improve locking in the cache.
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Mon, 03 Aug 2020 15:18:15 +0100
+
 graphite-carbon (1.1.4-2pexip3) pexip; urgency=medium
 
   * Disable import from twisted.conch.manhole_ssh. We don't use that
