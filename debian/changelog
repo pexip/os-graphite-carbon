@@ -1,3 +1,11 @@
+graphite-carbon (1.1.4-2pexip3) pexip; urgency=medium
+
+  * Disable import from twisted.conch.manhole_ssh. We don't use that
+    code ever, and at import it explodes with our openssl setup. Fixes
+    https://github.com/pexip/mcu/issues/20874.
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Mon, 03 Aug 2020 12:16:22 +0100
+
 graphite-carbon (1.1.4-2pexip2) pexip; urgency=medium
 
   * Rebuild in buster environment
