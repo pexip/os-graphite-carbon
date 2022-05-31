@@ -1,0 +1,74 @@
+# http://travis-ci.org/#!/graphite-project/carbon
+dist: xenial
+language: python
+python: 2.7
+
+matrix:
+  include:
+    - python: pypy
+      env:
+        - TOXENV=pypy
+    - python: 3.5
+      env:
+        - TOXENV=py35
+    - python: 3.6
+      env:
+        - TOXENV=py36
+    - python: 3.7
+      env:
+        - TOXENV=py37
+    - python: 3.8
+      env:
+        - TOXENV=py38-pyhash
+    - python: 3.8
+      env:
+        - TOXENV=py38
+    - python: 3.8
+      env:
+        - TOXENV=lint
+    - python: 2.7
+      arch: s390x
+      env:
+        - TOXENV=py27
+    - python: 2.7
+      arch: s390x
+      env:
+        - TOXENV=lint
+    - python: 3.5
+      arch: s390x
+      env:
+        - TOXENV=py35
+    - python: 3.6
+      arch: s390x
+      env:
+        - TOXENV=py36
+    - python: 3.7
+      arch: s390x
+      env:
+        - TOXENV=py37
+    - python: 3.8
+      arch: s390x
+      env:
+        - TOXENV=py38
+    - python: 3.8
+      arch: s390x
+      env:
+        - TOXENV=lint
+
+env:
+  - TOXENV=py27
+  - TOXENV=py27-pyhash
+  - TOXENV=lint
+
+install:
+  - if [[ $(uname -m) == 's390x' ]]; then sudo rm -rf $HOME/.cache/pip; fi
+  - if echo "$TOXENV" | grep -q 'pyhash' ; then sudo apt-get -q install -y libboost-python-dev; fi
+  - if echo "$TOXENV" | grep -q '^py2'   ; then pip install --upgrade pip virtualenv; fi
+  - pip install tox
+
+script:
+  - tox -e $TOXENV
+
+after_success:
+  - pip install codecov
+  - codecov
