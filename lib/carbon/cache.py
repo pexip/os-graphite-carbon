@@ -158,7 +158,8 @@ class _MetricCache(defaultdict):
 
   @property
   def counts(self):
-    return [(metric, len(datapoints)) for (metric, datapoints) in self.items()]
+    return [(metric, len(datapoints)) for (metric, datapoints)
+            in self.items()]
 
   @property
   def watermarks(self):
@@ -184,7 +185,8 @@ class _MetricCache(defaultdict):
     if not self:
       return (None, [])
     if self.strategy:
-      metric = self.strategy.choose_item()
+      with self.lock:
+        metric = self.strategy.choose_item()
     else:
       # Avoid .keys() as it dumps the whole list
       metric = next(iter(self))
@@ -206,18 +208,18 @@ class _MetricCache(defaultdict):
 
   def store(self, metric, datapoint):
     timestamp, value = datapoint
-    if timestamp not in self[metric]:
-      # Not a duplicate, hence process if cache is not full
-      if self.is_full:
-        log.msg("MetricCache is full: self.size=%d" % self.size)
-        events.cacheFull()
-      else:
-        with self.lock:
+    with self.lock:
+      if timestamp not in self[metric]:
+        # Not a duplicate, hence process if cache is not full
+        if self.is_full:
+          log.msg("MetricCache is full: self.size=%d" % self.size)
+          events.cacheFull()
+        else:
           self.size += 1
           self[metric][timestamp] = value
-    else:
-      # Updating a duplicate does not increase the cache size
-      self[metric][timestamp] = value
+      else:
+        # Updating a duplicate does not increase the cache size
+        self[metric][timestamp] = value
 
 
 _Cache = None
