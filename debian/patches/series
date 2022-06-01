@@ -2,5 +2,3 @@ carbon.conf.debian.patch
 validate-storage-schemas.debian.patch
 fix_logrotate_race.patch
 disable-manhole_ssh-import.patch
-add-locking-in-cache.py.patch
-fix-carbon-cache-locking.patch
