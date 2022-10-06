@@ -1,3 +1,9 @@
+graphite-carbon (1.1.7-1pexip4) pexip; urgency=medium
+
+  * Also disable importing OpenSSHFactory.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 06 Oct 2022 11:55:33 +0100
+
 graphite-carbon (1.1.7-1pexip3) pexip-bullseye; urgency=medium
 
   * Bullseye rebuild for ARM64 inclusion
