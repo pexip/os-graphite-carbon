@@ -1,3 +1,10 @@
+graphite-carbon (1.1.7-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * No source change upload to rebuild with debhelper 13.10.
+
+ -- Michael Biebl <biebl@debian.org>  Sat, 15 Oct 2022 12:07:52 +0200
+
 graphite-carbon (1.1.7-1) unstable; urgency=high
 
   [ Peter Gervai ]
