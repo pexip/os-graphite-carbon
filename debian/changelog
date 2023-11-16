@@ -1,3 +1,9 @@
+graphite-carbon (1.1.7-1.1pexip1) pexip-bookworm; urgency=medium
+
+  * Initial bookworm build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 16 Nov 2023 10:00:52 +0000
+
 graphite-carbon (1.1.7-1.1) unstable; urgency=medium
 
   * Non-maintainer upload.
