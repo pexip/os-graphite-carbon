@@ -1,2 +1,3 @@
+py312.patch
 carbon.conf.debian.patch
 validate-storage-schemas.debian.patch

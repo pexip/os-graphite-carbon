@@ -1,4 +1,4 @@
-Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Contact: Chris Davis <chrismd@gmail.com>
 Source: http://pypi.python.org/pypi/carbon/
 Upstream-Name: Carbon
@@ -13,7 +13,7 @@ License: Apache-2.0
 
 Files: lib/carbon/amqp0-8.xml
 Copyright: 2009 AMQP Working Group
-License: Custom-AMQP-Working-Group
+License: BSD-3-clause
  Redistribution and use in source and binary forms, with or without
  modification, are permitted provided that the following conditions
  are met:

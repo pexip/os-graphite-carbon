@@ -1,0 +1,78 @@
+#!/usr/bin/python3
+
+
+import socket
+import subprocess
+import signal
+import time
+import unittest
+
+
+USER = "_graphite"
+ADDR = "127.0.0.1"
+PORT = 2003
+
+
+class SmokeTest(unittest.TestCase):
+
+    @classmethod
+    def server_ready(cls):
+        try:
+            s = socket.socket()
+            s.connect(
+                (
+                    ADDR,
+                    PORT,
+                )
+            )
+        except socket.error:
+            return False
+        else:
+            return True
+        finally:
+            s.close()
+
+    @classmethod
+    def setUpClass(cls):
+        # launch dev server
+        cls.testserver = subprocess.Popen(
+            [
+                "/usr/bin/carbon-cache",
+                "--config=/etc/carbon/carbon.conf",
+                "--pidfile=/tmp/carbon-cache.pid",
+                "--logdir=/var/log/carbon",
+                "--nodaemon",
+                "--debug",
+                "start",
+            ],
+    #        user=USER,
+        )
+
+        # ensure server is ready
+        retries = 10
+        while not cls.server_ready() and retries > 0:
+            time.sleep(0.5)
+            retries = retries - 1
+            if retries == 0:
+                raise RuntimeError("test server is not available")
+
+    def test_storemetric(self):
+        s = socket.socket()
+        s.connect(
+            (
+                ADDR,
+                PORT,
+            )
+        )
+        epoch = time.time()
+        s.send(f"local.random.diceroll 4 {epoch}\n".encode("ascii"))
+        s.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.testserver.send_signal(signal.SIGTERM)
+        cls.testserver.wait()
+
+
+if __name__ == "__main__":
+    unittest.main()
