@@ -1,3 +1,4 @@
+py312.patch
 carbon.conf.debian.patch
 validate-storage-schemas.debian.patch
 fix_logrotate_race.patch

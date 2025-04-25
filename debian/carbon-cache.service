@@ -5,10 +5,8 @@ Documentation=https://graphite.readthedocs.io
 
 [Service]
 Type=forking
-StandardOutput=syslog
-StandardError=syslog
-ExecStart=/usr/bin/carbon-cache --config=/etc/carbon/carbon.conf --pidfile=/var/run/carbon-cache.pid --logdir=/var/log/carbon/ start
-PIDFile=/var/run/carbon-cache.pid
+ExecStart=/usr/bin/carbon-cache --config=/etc/carbon/carbon.conf --pidfile=/run/carbon-cache.pid --logdir=/var/log/carbon/ start
+PIDFile=/run/carbon-cache.pid
 
 [Install]
 WantedBy=multi-user.target

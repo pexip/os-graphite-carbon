@@ -1,3 +1,53 @@
+graphite-carbon (1.1.10-2) unstable; urgency=medium
+
+  * add autopkgtest to test carbon-cache running
+  * fix py312 patch tagging
+  * remove duplicate override_dh_installsystemd
+  * remove carbon-client manpages (executable removed upstream)
+  * provide manpage and service for carbon-aggregator-cache
+  * fix manpages groff-message warning: cannot select font 'b
+  * use -noawait trigger for twisted-plugins-cache
+  * add missing depend to python3-six
+  * fix autopkgtest
+  * fix d/copyright for lib/carbon/amqp0-8.xml
+  * add missing Build-Depend on python3-setuptools (Closes: #1080606)
+  * autopkgtest: wait a bit more for the test server to be available
+
+ -- Alexandre Rossi <niol@zincube.net>  Tue, 10 Sep 2024 18:01:19 +0200
+
+graphite-carbon (1.1.10-1) unstable; urgency=medium
+
+  [ Debian Janitor ]
+  * Use secure copyright file specification URI.
+  * Bump debhelper from old 10 to 13.
+    + Replace python_distutils buildsystem with pybuild.
+    + Use dh_installsystemd rather than deprecated dh_systemd_enable.
+    + Use dh_installsystemd rather than deprecated dh_systemd_start.
+  * Set debhelper-compat version in Build-Depends.
+  * Replace /var/run with /run for the Service PIDFile.
+
+  [ Alexandre Rossi ]
+  * update d/watch with move from md5 to sha256
+  * New upstream version 1.1.10
+  * Rules-Requires-Root: no
+  * add myself to uploaders
+  * add Pre-depends for --skip-systemd-native
+  * declare compliance to policy 4.7.0 (no change)
+  * port to py3.12 (Closes: #1074696, #1075712)
+  * do not mess with python shebang (Closes: #1022922)
+  * let dh do its cleaning magic (Closes: #1044615)
+  * drop dep on lsb-base
+  * StandardError= and StandardOutput= in unit files no longer support "syslog"
+
+ -- Alexandre Rossi <niol@zincube.net>  Fri, 05 Jul 2024 15:32:02 +0200
+
+graphite-carbon (1.1.7-1.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * No source change upload to move systemd units into /usr.
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Sun, 26 May 2024 17:52:02 +0200
+
 graphite-carbon (1.1.7-1.1+pexip24u3) pexip-bookworm; urgency=medium
 
   * New versioning scheme
