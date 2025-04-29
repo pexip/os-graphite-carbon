@@ -1,3 +1,9 @@
+graphite-carbon (1.1.10-2+pexip25u1) pexip-trixie; urgency=medium
+
+  * Initial trixie build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Tue, 29 Apr 2025 22:32:53 +0100
+
 graphite-carbon (1.1.10-2) unstable; urgency=medium
 
   * add autopkgtest to test carbon-cache running
