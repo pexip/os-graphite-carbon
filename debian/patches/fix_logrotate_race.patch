@@ -1,3 +1,5 @@
+Avoid a race when logrotate is running in the background.
+
 diff --git a/lib/carbon/log.py b/lib/carbon/log.py
 index dbbd2e0..932f8a7 100644
 --- a/lib/carbon/log.py

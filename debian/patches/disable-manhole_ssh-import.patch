@@ -1,3 +1,5 @@
+Ensure that the twisted SSH manhole is never enabled.
+
 Index: os-graphite-carbon/lib/carbon/manhole.py
 ===================================================================
 --- os-graphite-carbon.orig/lib/carbon/manhole.py
